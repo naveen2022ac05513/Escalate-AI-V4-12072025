@@ -8,9 +8,9 @@ import streamlit as st
 # ========== Microsoft Graph API OAuth & Email Fetch ==========
 
 # Set these as env vars or hardcode for testing
-CLIENT_ID = os.getenv("MS_CLIENT_ID")  # Azure app client id
-CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET")  # Azure app client secret
-TENANT_ID = os.getenv("MS_TENANT_ID")  # Azure tenant id
+CLIENT_ID = "8df1bf10-bf08-4ce9-8078-c387d17aa785"
+CLIENT_SECRET = "169948a0-3581-449d-9d8c-f4f54160465d"
+TENANT_ID = "f8cdef31-a31e-4b4a-93e4-5f571e91255a"
 
 GRAPH_TOKEN_URL = f"https://login.microsoftonline.com/{TENANT_ID}/oauth2/v2.0/token"
 GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0"
