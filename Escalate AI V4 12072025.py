@@ -1,3 +1,7 @@
+import os
+from dotenv import load_dotenv  # ✅ Add this
+load_dotenv()                   # ✅ This loads values from .env into os.environ
+
 import requests
 
 # ========== Microsoft Graph API OAuth & Email Fetch ==========
