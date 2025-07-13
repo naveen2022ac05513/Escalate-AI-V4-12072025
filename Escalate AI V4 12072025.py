@@ -283,6 +283,20 @@ else:
     )
 
     st.markdown(f"### {summary}")
+    required_cols = ["status", "risk_score"]
+for col in required_cols:
+    if col not in df.columns:
+        df[col] = None  # or a suitable default like "Open" or 0.0
+
+# Safe conversion for risk_score
+df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce").fillna(0)
+
+# Normalize status values
+df["status"] = df["status"].astype(str).str.strip().str.title()
+
+# Proceed to sort
+for _, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).iterrows():
+    ...
 
     # Sort by status then risk score (descending)
     for _, r in (
