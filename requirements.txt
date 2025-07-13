@@ -1,0 +1,12 @@
+streamlit
+pandas
+openpyxl
+python-dotenv
+transformers
+scikit-learn
+joblib
+requests
+apscheduler
+xlsxwriter
+msal
+torch
