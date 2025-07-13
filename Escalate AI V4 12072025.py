@@ -65,16 +65,24 @@ def predict_risk(text):
     return round(min(len(text.split())/50, 1.0), 2)
 
 def upsert_case(case: dict):
-    valid = get_escalation_columns()
-    clean = {k: case[k] for k in case if k in valid}
-    cols = ",".join(clean.keys())
-    qms = ",".join("?" for _ in clean)
-    upd = ",".join(f"{k}=excluded.{k}" for k in clean if k != "id")
+    # Get actual DB schema
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(escalations)")
+    columns = [col[1] for col in cur.fetchall()]
+    conn.close()
+
+    # Keep only valid fields
+    filtered_case = {k: v for k, v in case.items() if k in columns}
+    keys = ",".join(filtered_case.keys())
+    qms  = ",".join(["?"] * len(filtered_case))
+    upd  = ",".join([f"{k}=excluded.{k}" for k in filtered_case if k != "id"])
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(f"""
-        INSERT INTO escalations ({cols}) VALUES ({qms})
-        ON CONFLICT(id) DO UPDATE SET {upd}
-        """, tuple(clean.values()))
+            INSERT INTO escalations ({keys}) VALUES ({qms})
+            ON CONFLICT(id) DO UPDATE SET {upd}
+        """, tuple(filtered_case.values()))
 
 def fetch_cases():
     conn = sqlite3.connect(DB_PATH)
