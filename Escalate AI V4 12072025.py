@@ -92,10 +92,7 @@ def analyze_issue(text:str)->Tuple[str,str,bool]:
     else:
         sentiment=rule_sent(text)
     urgency="High" if any(k in text.lower() for k in ["urgent","immediate","critical"]) else "Low"
-    return sentiment, urgency, sentiment=="Negative" and urgency=="High"
-
-# [No other changes below this point — document truncated for brevity]
-
+    return sentiment, urgency, sentiment=="Negative" and urgency=="High
 
 # ----------------------------
 # SQLite init & helpers
@@ -232,20 +229,32 @@ with st.sidebar:
         df=pd.read_excel(uploaded) if uploaded.name.endswith("xlsx") else pd.read_csv(uploaded)
         for _, row in df.iterrows():
             sentiment,urgency,esc=analyze_issue(str(row.get("issue","")))
-           case = {
-                    "id": row.get("id", f"ESC{int(datetime.utcnow().timestamp())}"),
-                    "customer": row.get("customer", "Unknown"),
-                    "issue": row.get("issue", ""),
-                    "criticality": row.get("criticality", "Medium"),
-                    "impact": row.get("impact", "Medium"),
-                    "sentiment": sentiment,
-                    "urgency": urgency,
-                    "escalated": int(esc),
-                    "date_reported": str(row.get("date_reported", datetime.today().date())),
-                    "owner": row.get("owner", "Unassigned"),
-                    "status": row.get("status", "Open"),
-                    "action_taken": row.get("action_taken", ""),
-                    "risk_score": predict_risk(row.get("issue", "")),
-                    "spoc_email": row.get("spoc_email", ""),
-                    "spoc_boss_email": row.get("spoc_boss_email", "")
-                        }
+         
+
+# ----------------------------
+# Excel Upload Patch (Fix case block)
+# ----------------------------
+# This should go inside the 'if uploaded and st.button("Ingest"):' block
+# Example usage:
+for _, row in df.iterrows():
+     sentiment, urgency, esc = analyze_issue(str(row.get("issue", "")))
+     case = {
+         "id": row.get("id", f"ESC{int(datetime.utcnow().timestamp())}"),
+         "customer": row.get("customer", "Unknown"),
+         "issue": row.get("issue", ""),
+         "criticality": row.get("criticality", "Medium"),
+         "impact": row.get("impact", "Medium"),
+         "sentiment": sentiment,
+         "urgency": urgency,
+         "escalated": int(esc),
+         "date_reported": str(row.get("date_reported", datetime.today().date())),
+         "owner": row.get("owner", "Unassigned"),
+         "status": row.get("status", "Open"),
+         "action_taken": row.get("action_taken", ""),
+         "risk_score": predict_risk(row.get("issue", "")),
+         "spoc_email": row.get("spoc_email", ""),
+         "spoc_boss_email": row.get("spoc_boss_email", "")
+     }
+     upsert_case(case)
+
+
