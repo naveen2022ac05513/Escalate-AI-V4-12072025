@@ -71,7 +71,10 @@ def upsert_case(case):
 
 def fetch_cases():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT * FROM escalations ORDER BY datetime(created_at) DESC", conn)
+    schema = pd.read_sql("PRAGMA table_info(escalations)", conn)
+    cols = schema["name"].tolist()
+    order = " ORDER BY datetime(created_at) DESC" if "created_at" in cols else ""
+    df = pd.read_sql("SELECT * FROM escalations" + order, conn)
     conn.close()
     return df
 
