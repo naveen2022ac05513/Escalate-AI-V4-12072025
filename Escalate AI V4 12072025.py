@@ -51,7 +51,6 @@ try:
 except Exception:
     pass
 
-
 # dotenv optional
 try:
     from dotenv import load_dotenv; load_dotenv()
@@ -94,6 +93,9 @@ def analyze_issue(text:str)->Tuple[str,str,bool]:
         sentiment=rule_sent(text)
     urgency="High" if any(k in text.lower() for k in ["urgent","immediate","critical"]) else "Low"
     return sentiment, urgency, sentiment=="Negative" and urgency=="High"
+
+# [No other changes below this point — document truncated for brevity]
+
 
 # ----------------------------
 # SQLite init & helpers
