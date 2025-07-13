@@ -51,7 +51,8 @@ def init_db() -> None:
             spoc_last_notified TEXT,
             escalated INTEGER DEFAULT 0,
             date_reported TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            internal_notes TEXT DEFAULT ""
         )
         """
     )
@@ -157,7 +158,6 @@ def notify_spoc(esc_id: str, email: str) -> None:
                 (datetime.utcnow().isoformat(), esc_id),
             )
     except Exception as exc:  # noqa: BLE001
-        # Log exception for debug; in production consider using proper logging
         print("[notify_spoc]", exc)
 
 
@@ -173,15 +173,10 @@ def monitor_reminders() -> None:
             reported = datetime.fromisoformat(r["date_reported"])
             hours_open = (now - reported).total_seconds() / 3600
 
-            # Notify SPOC every 6 h (max twice) and manager after 24 h
             if r["spoc_notify_count"] < 2 and hours_open > (r["spoc_notify_count"] + 1) * 6:
                 notify_spoc(r["id"], r["spoc_email"])
 
-            elif (
-                r["spoc_notify_count"] >= 2
-                and hours_open > 24
-                and not r["escalated"]
-            ):
+            elif r["spoc_notify_count"] >= 2 and hours_open > 24 and not r["escalated"]:
                 notify_spoc(r["id"], r["spoc_manager_email"])
                 upsert_case({**r.to_dict(), "escalated": 1})
         except Exception as exc:  # noqa: BLE001
@@ -194,134 +189,58 @@ sched.start()
 atexit.register(sched.shutdown)
 
 # ────────────────────────────────────────────────────────────────────────────────
-# STREAMLIT UI
+# UI DASHBOARD (Streamlit)
 # ────────────────────────────────────────────────────────────────────────────────
+st.set_page_config("EscalateAI Dashboard", layout="wide")
+st.title("🚨 EscalateAI – Escalation Management")
 
-st.set_page_config("EscalateAI", layout="wide")
-st.title("🚨 EscalateAI – Escalation Tracker")
-
-# ───────────── Sidebar: Upload & Manual Entry ─────────────
-with st.sidebar:
-    st.header("📥 Upload Escalations")
-    uploaded = st.file_uploader("Excel/CSV", type=["xlsx", "csv"])
-    if uploaded and st.button("Ingest File"):
-        df_u = (
-            pd.read_excel(uploaded)
-            if uploaded.name.lower().endswith(".xlsx")
-            else pd.read_csv(uploaded)
-        )
-
-        base_id = int(datetime.utcnow().timestamp() * 1000)
-        for idx, row in df_u.iterrows():
-            issue = str(row.get("Brief Issue", "") or row.get("issue", ""))
-            sentiment, urgency, _ = analyze_issue(issue)
-
-            case = {
-                "id": f"ESC{base_id + idx}",
-                "customer": row.get("Customer", "Unknown"),
-                "issue": issue,
-                "sentiment": sentiment,
-                "urgency": urgency,
-                "risk_score": predict_risk(issue),
-                "status": str(row.get("Status", "Open")).strip().title(),
-                "action_taken": row.get("Action taken", ""),
-                "owner": row.get("Owner", ""),
-                "spoc_email": row.get("SPOC Email", ""),
-                "spoc_manager_email": row.get("Manager Email", ""),
-                "spoc_notify_count": 0,
-                "spoc_last_notified": "",
-                "escalated": 0,
-                "date_reported": str(
-                    row.get("Issue reported date", datetime.utcnow().isoformat())
-                ),
-            }
-            upsert_case(case)
-        st.success("Escalations ingested.")
-
-    st.header("✏️ Manual Entry")
-    with st.form("manual-entry"):
-        cname = st.text_input("Customer")
-        issue = st.text_area("Issue")
-        owner = st.text_input("Owner", "Unassigned")
-        spoc = st.text_input("SPOC Email")
-        mgr = st.text_input("Manager Email")
-        if st.form_submit_button("Log"):
-            sentiment, urgency, _ = analyze_issue(issue)
-            esc_id = f"ESC{int(datetime.utcnow().timestamp() * 1000)}"
-            case = {
-                "id": esc_id,
-                "customer": cname,
-                "issue": issue,
-                "sentiment": sentiment,
-                "urgency": urgency,
-                "risk_score": predict_risk(issue),
-                "status": "Open",
-                "action_taken": "",
-                "owner": owner,
-                "spoc_email": spoc,
-                "spoc_manager_email": mgr,
-                "spoc_notify_count": 0,
-                "spoc_last_notified": "",
-                "escalated": 0,
-                "date_reported": datetime.utcnow().isoformat(),
-            }
-            upsert_case(case)
-            notify_spoc(esc_id, spoc)
-            st.success(f"Escalation {esc_id} logged.")
-
-# ───────────── Kanban Board ─────────────
+# Load Data
 df = fetch_cases()
-if df.empty:
-    st.info("No escalations logged yet.")
-else:
-    for col in ["status", "risk_score"]:
-        if col not in df.columns:
-            df[col] = None
 
-    df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce").fillna(0)
-    df["status"] = df["status"].astype(str).str.strip().str.title()
+# Filters and Search
+with st.sidebar:
+    st.header("🔍 Filters")
+    status_filter = st.multiselect("Status", options=df["status"].unique().tolist())
+    owner_filter = st.multiselect("Owner", options=df["owner"].dropna().unique().tolist())
+    keyword = st.text_input("Search by keyword (ID/Customer/Issue)")
 
-    counts = df["status"].value_counts().to_dict()
-    emojis = {"Open": "🟥", "In Progress": "🟧", "Resolved": "🟩"}
-    summary = " | ".join(
-        f"{emojis.get(s, '')} {s}: {counts.get(s, 0)}" for s in ["Open", "In Progress", "Resolved"]
-    )
+    df_filtered = df.copy()
+    if status_filter:
+        df_filtered = df_filtered[df_filtered["status"].isin(status_filter)]
+    if owner_filter:
+        df_filtered = df_filtered[df_filtered["owner"].isin(owner_filter)]
+    if keyword:
+        df_filtered = df_filtered[df_filtered.apply(
+            lambda row: keyword.lower() in str(row["id"]).lower()
+                        or keyword.lower() in str(row["customer"]).lower()
+                        or keyword.lower() in str(row["issue"]).lower(),
+            axis=1)]
 
-    st.markdown(f"### {summary}")
+    if st.button("Export to CSV"):
+        st.download_button("Download", data=df_filtered.to_csv(index=False),
+                           file_name="escalations.csv", mime="text/csv")
 
-    for i, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).reset_index(drop=True).iterrows():
-        with st.expander(f"{r['id']} – {r['customer']}", expanded=False):
-            st.write(r.get("issue", "No issue provided"))
-            st.markdown(
-                f"**Sentiment / Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
-                f"**Owner:** {r.get('owner', 'Unassigned')}  \n"
-                f"**Risk Score:** {float(r.get('risk_score', 0) or 0):.2f}  \n"
-                f"**Status:** {r.get('status', '–')}  \n"
-                f"**Action Taken:** {r.get('action_taken', '')}  \n"
-                f"**SPOC Email:** {r.get('spoc_email', '–')}  \n"
-                f"**Manager Email:** {r.get('spoc_manager_email', '–')}"
-            )
+# Display Summary
+status_counts = df_filtered["status"].value_counts().to_dict()
+st.markdown("**Summary**")
+st.write(" | ".join(f"{k}: {v}" for k, v in status_counts.items()))
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Notify SPOC", key=f"notify-{r['id']}-{i}"):
-                    notify_spoc(r["id"], r["spoc_email"])
-                    st.success("SPOC notified.")
-            with col2:
-                new_status = st.selectbox(
-                    "Update status:",
-                    ["Open", "In Progress", "Resolved"],
-                    index=["Open", "In Progress", "Resolved"].index(r["status"]),
-                    key=f"status-{r['id']}-{i}",
-                )
-                if new_status != r["status"]:
-                    upsert_case({"id": r["id"], "status": new_status})
-                    st.experimental_rerun()
-
-# ────────────────────────────────────────────────────────────────────────────────
-# FOOTER
-# ────────────────────────────────────────────────────────────────────────────────
-
-st.caption(
-    "© 2025 EscalateAI  |  Built with Streamlit  |  Sends automated notifications every 6 h"
-)
+# Display Escalations
+for _, row in df_filtered.iterrows():
+    highlight = "🔴 " if row["sentiment"] == "Negative" and row["urgency"] == "High" else ""
+    with st.expander(f"{highlight}{row['id']} – {row['customer']}", expanded=False):
+        st.write(row["issue"])
+        st.text(f"Sentiment/Urgency: {row['sentiment']} / {row['urgency']}")
+        st.text(f"Risk Score: {row['risk_score']} | Status: {row['status']} | Owner: {row['owner']}")
+        st.text_area("Action Taken", value=row["action_taken"] or "", key=f"action-{row['id']}")
+        st.text_area("Internal Notes", value=row["internal_notes"] or "", key=f"notes-{row['id']}")
+        if st.button("Notify SPOC", key=f"notify-{row['id']}"):
+            notify_spoc(row["id"], row["spoc_email"])
+            st.success("SPOC Notified!")
+        if st.button("Save Changes", key=f"save-{row['id']}"):
+            upsert_case({
+                "id": row["id"],
+                "action_taken": st.session_state[f"action-{row['id']}"][:500],
+                "internal_notes": st.session_state[f"notes-{row['id']}"][:1000]
+            })
+            st.success("Saved.")
