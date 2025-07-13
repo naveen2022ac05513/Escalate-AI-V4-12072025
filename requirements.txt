@@ -7,6 +7,8 @@ scikit-learn
 joblib
 requests
 apscheduler
-xlsxwriter
-msal  
-torch
+msal
+sqlalchemy
+pyodbc
+fastapi
+uvicorn
