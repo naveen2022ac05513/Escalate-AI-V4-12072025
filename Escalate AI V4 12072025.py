@@ -185,16 +185,12 @@ summary = " | ".join([
     f"{emojis.get(s, '')} {s}: {counts.get(s, 0)}"
     for s in ["Open", "In Progress", "Resolved"]
 ])
-st.markdown(f"### {summary}")
-
-statuses = ["Open", "In Progress", "Resolved"]
-cols = st.columns(len(statuses))
-for i, status in enumerate(statuses):
-    with cols[i]:
-        st.subheader(status)
-        for _, r in df[df["status"] == status].iterrows():
-            with st.expander(f"{r['id']} – {r['customer']}", expanded=False):
-                st.write(r.get("issue", "No issue provided"))
-                st.markdown(
-                    f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
-                    f"**Owner:** {r.get('owner', '
+st.markdown(
+    f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
+    f"**Owner:** {r.get('owner', 'Unassigned')}  \n"
+    f"**Risk Score:** {float(r.get('risk_score', 0) or 0):.2f}  \n"
+    f"**Status:** {r.get('status', '–')}  \n"
+    f"**Action Taken:** {r.get('action_taken', '')}  \n"
+    f"**SPOC Email:** {r.get('spoc_email', '–')}  \n"
+    f"**Manager Email:** {r.get('spoc_manager_email', '–')}"
+)
