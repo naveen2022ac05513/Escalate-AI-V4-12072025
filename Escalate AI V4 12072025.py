@@ -274,7 +274,12 @@ df = fetch_cases()
 if df.empty:
     st.info("No escalations logged yet.")
 else:
-    df["status"] = df["status"].fillna("Open").astype(str).str.strip().str.title()
+    for col in ["status", "risk_score"]:
+        if col not in df.columns:
+            df[col] = None
+
+    df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce").fillna(0)
+    df["status"] = df["status"].astype(str).str.strip().str.title()
 
     counts = df["status"].value_counts().to_dict()
     emojis = {"Open": "🟥", "In Progress": "🟧", "Resolved": "🟩"}
@@ -283,25 +288,8 @@ else:
     )
 
     st.markdown(f"### {summary}")
-    required_cols = ["status", "risk_score"]
-for col in required_cols:
-    if col not in df.columns:
-        df[col] = None  # or a suitable default like "Open" or 0.0
 
-# Safe conversion for risk_score
-df["risk_score"] = pd.to_numeric(df["risk_score"], errors="coerce").fillna(0)
-
-# Normalize status values
-df["status"] = df["status"].astype(str).str.strip().str.title()
-
-# Proceed to sort
-for _, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).iterrows():
-    ...
-
-    # Sort by status then risk score (descending)
-    for _, r in (
-        df.sort_values(["status", "risk_score"], ascending=[True, False]).iterrows()
-    ):
+    for i, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).reset_index(drop=True).iterrows():
         with st.expander(f"{r['id']} – {r['customer']}", expanded=False):
             st.write(r.get("issue", "No issue provided"))
             st.markdown(
@@ -316,7 +304,7 @@ for _, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).it
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Notify SPOC", key=f"notify-{r['id']}"):
+                if st.button("Notify SPOC", key=f"notify-{r['id']}-{i}"):
                     notify_spoc(r["id"], r["spoc_email"])
                     st.success("SPOC notified.")
             with col2:
@@ -324,7 +312,7 @@ for _, r in df.sort_values(["status", "risk_score"], ascending=[True, False]).it
                     "Update status:",
                     ["Open", "In Progress", "Resolved"],
                     index=["Open", "In Progress", "Resolved"].index(r["status"]),
-                    key=f"status-{r['id']}",
+                    key=f"status-{r['id']}-{i}",
                 )
                 if new_status != r["status"]:
                     upsert_case({"id": r["id"], "status": new_status})
