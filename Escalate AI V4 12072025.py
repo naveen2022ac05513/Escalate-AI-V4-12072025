@@ -92,41 +92,33 @@ def analyze_priority(email: str) -> str:
 # ----------------------------
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS spoc_directory (
-          spoc_email TEXT PRIMARY KEY,
-          spoc_name TEXT,
-          spoc_manager_email TEXT,
-          teams_webhook TEXT
-        )
-    """)
-    conn.execute("""
+    cur  = conn.cursor()
+
+    # 1) Create escalations table if missing (without ordering column)
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS escalations (
-          id TEXT PRIMARY KEY,
-          customer TEXT,
-          issue TEXT,
-          sentiment TEXT,
-          urgency TEXT,
-          priority TEXT,
-          status TEXT,
-          date_reported TEXT,
-          spoc_email TEXT,
-          spoc_boss_email TEXT,
-          reminders_sent INTEGER DEFAULT 0,
-          escalated INTEGER DEFAULT 0,
-          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            id TEXT PRIMARY KEY,
+            customer TEXT, issue TEXT, sentiment TEXT, urgency TEXT,
+            priority TEXT, status TEXT, date_reported TEXT,
+            spoc_email TEXT, spoc_boss_email TEXT,
+            reminders_sent INTEGER DEFAULT 0,
+            escalated INTEGER DEFAULT 0
         )
     """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS notification_log (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          escalation_id TEXT,
-          recipient_email TEXT,
-          subject TEXT,
-          body TEXT,
-          sent_at TEXT
-        )
-    """)
+
+    # 2) Add created_at column if it doesn’t already exist
+    cur.execute("PRAGMA table_info(escalations)")
+    cols = [c[1] for c in cur.fetchall()]
+    if "created_at" not in cols:
+        try:
+            cur.execute("""
+                ALTER TABLE escalations
+                ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            """)
+        except sqlite3.OperationalError:
+            # Older SQLite might not support ALTER―ignore if it fails
+            pass
+
     conn.commit()
     conn.close()
 
@@ -143,10 +135,21 @@ def upsert_case(case: dict):
         """, tuple(case.values()))
 
 def fetch_cases() -> pd.DataFrame:
-    return pd.read_sql_query(
-        "SELECT * FROM escalations ORDER BY created_at DESC",
-        sqlite3.connect(DB_PATH)
-    )
+    conn = sqlite3.connect(DB_PATH)
+
+    # Inspect schema to see if created_at is present
+    tbl = pd.read_sql_query("PRAGMA table_info(escalations)", conn)
+    if "created_at" in tbl["name"].values:
+        df = pd.read_sql_query(
+            "SELECT * FROM escalations ORDER BY created_at DESC",
+            conn
+        )
+    else:
+        df = pd.read_sql_query("SELECT * FROM escalations", conn)
+
+    conn.close()
+    return df
+
 
 def fetch_spocs() -> pd.DataFrame:
     return pd.read_sql_query(
