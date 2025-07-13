@@ -43,10 +43,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 # Optional: sentiment model
+HAS_NLP = False
 try:
-    from transformers import pipeline as hf_pipeline; import torch; HAS_NLP=True
+    from transformers import pipeline as hf_pipeline
+    import torch
+    HAS_NLP = True
 except Exception:
-    HAS_NLP=False
+    pass
+
 
 # dotenv optional
 try:
