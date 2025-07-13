@@ -230,28 +230,39 @@ with st.sidebar:
                 """, (r.spoc_email, r.spoc_name, r.spoc_manager_email, r.teams_webhook))
         st.success("SPOC list updated.")
 
-# Main: Kanban columns + Notify button
+# ✅ Safe Kanban Columns
+statuses = ["Open", "In Progress", "Resolved"]
 df = fetch_cases()
-cols = st.columns(3)
-statuses = ["Open","In Progress","Resolved"]
 
-for idx, status in enumerate(statuses):
-    with cols[idx]:
+# Ensure fallback defaults for missing columns
+expected_cols = [
+    "id", "customer", "issue", "sentiment", "urgency", "risk_score",
+    "status", "action_taken", "owner", "spoc_email", "spoc_manager_email"
+]
+for col in expected_cols:
+    if col not in df.columns:
+        df[col] = ""
+
+cols = st.columns(len(statuses))
+for i, status in enumerate(statuses):
+    with cols[i]:
         st.subheader(status)
-        for _, r in df[df.status==status].iterrows():
-            with st.expander(f"{r.id} – {r.customer}", expanded=False):
+        sub_df = df[df["status"] == status]
+        for _, r in sub_df.iterrows():
+            with st.expander(f"{r.get('id', '')} – {r.get('customer', '')}", expanded=False):
                 st.markdown(f"""
-                **Issue:** {r.issue}  
-                **Sentiment/Urgency:** {r.sentiment} / {r.urgency}  
-                **Owner:** {r.owner}  
-                **Risk Score:** {r.risk_score:.2f}  
-                **Status:** {r.status}  
-                **Action Taken:** {r.action_taken}  
-                **SPOC Email:** {r.spoc_email}  
-                **Manager Email:** {r.spoc_manager_email}  
+                **Issue:** {r.get("issue", "—")}  
+                **Sentiment / Urgency:** {r.get("sentiment", "—")} / {r.get("urgency", "—")}  
+                **Owner:** {r.get("owner", "Unassigned")}  
+                **Risk Score:** {r.get("risk_score", 0):.2f}  
+                **Status:** {r.get("status", "Open")}  
+                **Action Taken:** {r.get("action_taken", "")}  
+                **SPOC Email:** {r.get("spoc_email", "—")}  
+                **Manager Email:** {r.get("spoc_manager_email", "—")}  
                 """)
-                if st.button("Notify SPOC", key=f"ntf-{r.id}"):
-                    notify_spoc(r.id, r.spoc_email)
+                # Notify Button
+                if st.button("Notify SPOC", key=f"notify-{r['id']}"):
+                    notify_spoc(r["id"], r["spoc_email"])
                     st.success("SPOC notified.")
 
 # Download Excel
