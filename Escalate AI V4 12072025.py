@@ -1,5 +1,5 @@
 # EscalateAI v3.1 – End-to-End Escalation Management System
-# Author: Chanakya Gandham • July 2025
+# Author: Naveen Gandham • July 2025
 
 import os
 import sqlite3
