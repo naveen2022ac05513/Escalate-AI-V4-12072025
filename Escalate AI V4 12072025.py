@@ -229,7 +229,18 @@ with st.sidebar:
                   VALUES (?,?,?,?)
                 """, (r.spoc_email, r.spoc_name, r.spoc_manager_email, r.teams_webhook))
         st.success("SPOC list updated.")
-
+# 🖍️ Colored status summary
+counts = df["status"].value_counts().to_dict()
+status_emojis = {
+    "Open": "🟥",         # red square
+    "In Progress": "🟧",  # orange square
+    "Resolved": "🟩"      # green square
+}
+summary = " | ".join([
+    f"{status_emojis.get(s,'')} {s}: {counts.get(s, 0)}"
+    for s in ["Open", "In Progress", "Resolved"]
+])
+st.markdown(f"### {summary}")
 # ✅ Safe Kanban Columns
 statuses = ["Open", "In Progress", "Resolved"]
 df = fetch_cases()
