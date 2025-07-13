@@ -8,5 +8,5 @@ joblib
 requests
 apscheduler
 xlsxwriter
-msal
+msal  
 torch
