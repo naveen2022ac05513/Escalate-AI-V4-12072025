@@ -233,19 +233,19 @@ with st.sidebar:
         for _, row in df.iterrows():
             sentiment,urgency,esc=analyze_issue(str(row.get("issue","")))
            case = {
-    "id": row.get("id", f"ESC{int(datetime.utcnow().timestamp())}"),
-    "customer": row.get("customer", "Unknown"),
-    "issue": row.get("issue", ""),
-    "criticality": row.get("criticality", "Medium"),
-    "impact": row.get("impact", "Medium"),
-    "sentiment": sentiment,
-    "urgency": urgency,
-    "escalated": int(esc),
-    "date_reported": str(row.get("date_reported", datetime.today().date())),
-    "owner": row.get("owner", "Unassigned"),
-    "status": row.get("status", "Open"),
-    "action_taken": row.get("action_taken", ""),
-    "risk_score": predict_risk(row.get("issue", "")),
-    "spoc_email": row.get("spoc_email", ""),
-    "spoc_boss_email": row.get("spoc_boss_email", "")
-}
+                    "id": row.get("id", f"ESC{int(datetime.utcnow().timestamp())}"),
+                    "customer": row.get("customer", "Unknown"),
+                    "issue": row.get("issue", ""),
+                    "criticality": row.get("criticality", "Medium"),
+                    "impact": row.get("impact", "Medium"),
+                    "sentiment": sentiment,
+                    "urgency": urgency,
+                    "escalated": int(esc),
+                    "date_reported": str(row.get("date_reported", datetime.today().date())),
+                    "owner": row.get("owner", "Unassigned"),
+                    "status": row.get("status", "Open"),
+                    "action_taken": row.get("action_taken", ""),
+                    "risk_score": predict_risk(row.get("issue", "")),
+                    "spoc_email": row.get("spoc_email", ""),
+                    "spoc_boss_email": row.get("spoc_boss_email", "")
+                        }
