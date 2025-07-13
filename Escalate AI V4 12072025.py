@@ -254,7 +254,7 @@ for i, status in enumerate(statuses):
                 **Issue:** {r.get("issue", "—")}  
                 **Sentiment / Urgency:** {r.get("sentiment", "—")} / {r.get("urgency", "—")}  
                 **Owner:** {r.get("owner", "Unassigned")}  
-                **Risk Score:** {r.get("risk_score", 0):.2f}  
+               **Risk Score:** {float(r.get("risk_score", 0) or 0):.2f} 
                 **Status:** {r.get("status", "Open")}  
                 **Action Taken:** {r.get("action_taken", "")}  
                 **SPOC Email:** {r.get("spoc_email", "—")}  
