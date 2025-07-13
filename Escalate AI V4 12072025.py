@@ -14,7 +14,7 @@ SMTP_USER   = os.getenv("SMTP_USER")
 SMTP_PASS   = os.getenv("SMTP_PASS")
 
 # Paths & DB setup
-APP_DIR = Path(__file__).parent
+APP_DIR  = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
 DB_PATH  = DATA_DIR / "escalateai.db"
 DATA_DIR.mkdir(exist_ok=True)
@@ -52,7 +52,7 @@ init_db()
 def analyze_priority(email: str) -> str:
     return "High" if not email.endswith(".se.com") else "Low"
 
-def send_email(to: str, message: str, subject: str="Escalation Notification"):
+def send_email(to, message, subject="Escalation Notification"):
     try:
         msg = MIMEText(message)
         msg["From"]    = SMTP_USER
@@ -65,14 +65,14 @@ def send_email(to: str, message: str, subject: str="Escalation Notification"):
     except Exception as e:
         print(f"SMTP error: {e}")
 
-def send_teams(webhook: str, message: str):
+def send_teams(webhook, message):
     if webhook:
         try:
             requests.post(webhook, json={"text": message})
         except Exception as e:
             print(f"Teams webhook error: {e}")
 
-def notify_spoc(spoc_email: str, escalation_id: str, level: str="Initial"):
+def notify_spoc(spoc_email, escalation_id, level="Initial"):
     conn = sqlite3.connect(DB_PATH)
     cur  = conn.cursor()
     cur.execute("SELECT teams_webhook FROM spoc_directory WHERE spoc_email=?", (spoc_email,))
@@ -83,7 +83,7 @@ def notify_spoc(spoc_email: str, escalation_id: str, level: str="Initial"):
     send_teams(webhook, msg)
     conn.close()
 
-def upsert_escalation(case: dict):
+def upsert_escalation(case):
     conn = sqlite3.connect(DB_PATH)
     cur  = conn.cursor()
     cur.execute("""
@@ -129,9 +129,8 @@ sched.start()
 # Streamlit UI
 st.title("🚨 EscalateAI v3.1")
 
-# Sidebar: Filters
-st.sidebar.markdown("### Filters")
-show_escalated_only = st.sidebar.checkbox("Show only escalated cases", value=False)
+# Main: Filter control (not in sidebar)
+show_escalated_only = st.checkbox("Show only escalated cases", value=False)
 
 # Sidebar: SPOC Directory Upload
 spoc_file = st.sidebar.file_uploader("Upload SPOC Directory", type="xlsx")
@@ -192,11 +191,11 @@ for i, status in enumerate(statuses):
                     st.success("Status updated.")
                     st.experimental_rerun()
 
-# Download current board as Excel
+# Download current board as Excel (main view)
 buffer = io.BytesIO()
 df.to_excel(buffer, index=False, sheet_name="Escalations")
 buffer.seek(0)
-st.sidebar.download_button(
+st.download_button(
     label="📥 Download Board as Excel",
     data=buffer,
     file_name="escalations_board.xlsx",
