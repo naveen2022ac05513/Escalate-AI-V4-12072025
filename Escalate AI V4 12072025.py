@@ -1,8 +1,17 @@
-import os, re, sqlite3, smtplib, requests, io
+# EscalateAI v3.1 – End-to-End Escalation Management System
+# Author: Chanakya Gandham • July 2025
+
+import os
+import sqlite3
+import smtplib
+import requests
+import io
 from email.mime.text import MIMEText
 from datetime import datetime
 from pathlib import Path
-import pandas as pd, streamlit as st
+
+import pandas as pd
+import streamlit as st
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 
@@ -13,7 +22,7 @@ SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER   = os.getenv("SMTP_USER")
 SMTP_PASS   = os.getenv("SMTP_PASS")
 
-# Paths & DB setup
+# Paths & database setup
 APP_DIR  = Path(__file__).parent
 DATA_DIR = APP_DIR / "data"
 DB_PATH  = DATA_DIR / "escalateai.db"
@@ -52,41 +61,40 @@ init_db()
 def analyze_priority(email: str) -> str:
     return "High" if not email.endswith(".se.com") else "Low"
 
-def send_email(to, message, subject="Escalation Notification"):
+def send_email(to: str, message: str, subject: str = "Escalation Notification"):
     try:
         msg = MIMEText(message)
-        msg["From"]    = SMTP_USER
-        msg["To"]      = to
-        msg["Subject"] = subject
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15) as s:
+        msg["From"], msg["To"], msg["Subject"] = SMTP_USER, to, subject
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASS)
             s.sendmail(SMTP_USER, [to], msg.as_string())
     except Exception as e:
-        print(f"SMTP error: {e}")
+        print(f"Email error: {e}")
 
-def send_teams(webhook, message):
+def send_teams(webhook: str, message: str):
     if webhook:
         try:
             requests.post(webhook, json={"text": message})
         except Exception as e:
             print(f"Teams webhook error: {e}")
 
-def notify_spoc(spoc_email, escalation_id, level="Initial"):
+def notify(spoc_email: str, escalation_id: str, level: str = "Initial"):
     conn = sqlite3.connect(DB_PATH)
-    cur  = conn.cursor()
-    cur.execute("SELECT teams_webhook FROM spoc_directory WHERE spoc_email=?", (spoc_email,))
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT teams_webhook FROM spoc_directory WHERE spoc_email=?",
+        (spoc_email,)
+    )
     row = cur.fetchone()
-    webhook = row[0] if row else None
+    conn.close()
     msg = f"{level} notification for escalation {escalation_id}"
     send_email(spoc_email, msg)
-    send_teams(webhook, msg)
-    conn.close()
+    send_teams(row[0] if row else None, msg)
 
-def upsert_escalation(case):
+def upsert_escalation(case: dict):
     conn = sqlite3.connect(DB_PATH)
-    cur  = conn.cursor()
-    cur.execute("""
+    conn.execute("""
         INSERT INTO escalations (
             id, issue, customer, sentiment, urgency,
             status, date_reported, spoc_email, spoc_boss_email,
@@ -96,18 +104,14 @@ def upsert_escalation(case):
             status=excluded.status,
             reminders_sent=excluded.reminders_sent,
             escalated=excluded.escalated
-    """, (
-        case["id"], case["issue"], case["customer"], case["sentiment"], case["urgency"],
-        case["status"], case["date_reported"], case["spoc_email"], case["spoc_boss_email"],
-        case["reminders_sent"], case["escalated"], case["priority"]
-    ))
+    """, tuple(case.values()))
     conn.commit()
     conn.close()
 
 def fetch_cases() -> pd.DataFrame:
     return pd.read_sql("SELECT * FROM escalations", sqlite3.connect(DB_PATH))
 
-# Scheduler for reminders & escalations
+# Reminder & escalation watcher
 def monitor_reminders():
     df  = fetch_cases()
     now = datetime.utcnow()
@@ -115,10 +119,10 @@ def monitor_reminders():
         reported = datetime.fromisoformat(row["date_reported"])
         hours   = (now - reported).total_seconds() / 3600
         if row["reminders_sent"] < 2 and hours > (row["reminders_sent"] + 1) * 6:
-            notify_spoc(row["spoc_email"], row["id"], f"Reminder {row['reminders_sent'] + 1}")
+            notify(row["spoc_email"], row["id"], f"Reminder {row['reminders_sent'] + 1}")
             row["reminders_sent"] += 1
         elif hours > 24 and row["reminders_sent"] >= 2 and not row["escalated"]:
-            send_email(row["spoc_boss_email"], f"Escalation {row['id']} was not resolved in time.")
+            send_email(row["spoc_boss_email"], f"Escalation {row['id']} was not resolved in 24h.")
             row["escalated"] = 1
         upsert_escalation(row.to_dict())
 
@@ -126,13 +130,11 @@ sched = BackgroundScheduler()
 sched.add_job(monitor_reminders, "interval", hours=1)
 sched.start()
 
-# Streamlit UI
+# ------------------ Streamlit UI ------------------
+
 st.title("🚨 EscalateAI v3.1")
 
-# Main: Filter control (not in sidebar)
-show_escalated_only = st.checkbox("Show only escalated cases", value=False)
-
-# Sidebar: SPOC Directory Upload
+# SPOC Directory Upload
 spoc_file = st.sidebar.file_uploader("Upload SPOC Directory", type="xlsx")
 if spoc_file and st.sidebar.button("Ingest SPOC"):
     df_spoc = pd.read_excel(spoc_file)
@@ -146,52 +148,60 @@ if spoc_file and st.sidebar.button("Ingest SPOC"):
     conn.close()
     st.success("SPOC directory updated.")
 
-# Sidebar: Escalation File Upload
+# Escalations Upload
 upload_file = st.sidebar.file_uploader("Upload Escalation File", type="xlsx")
 if upload_file and st.sidebar.button("Ingest Escalations"):
-    df_case = pd.read_excel(upload_file)
-    for _, r in df_case.iterrows():
+    df_escal = pd.read_excel(upload_file)
+    for _, r in df_escal.iterrows():
         case = {
-            "id":             str(r.get("id", f"ESC{int(datetime.utcnow().timestamp())}")),
-            "issue":          r.get("issue", ""),
-            "customer":       r.get("customer", "Unknown"),
-            "sentiment":      "Negative" if len(str(r.get("issue", ""))) > 15 else "Positive",
-            "urgency":        "High" if "urgent" in str(r.get("issue", "")).lower() else "Low",
-            "status":         r.get("status", "Open"),
-            "date_reported":  str(r.get("date_reported", datetime.utcnow().isoformat())),
-            "spoc_email":     r.get("spoc_email", ""),
-            "spoc_boss_email":r.get("spoc_boss_email", ""),
-            "reminders_sent": 0,
-            "escalated":      0,
-            "priority":       analyze_priority(r.get("customer_email", "unknown@domain.com"))
+            "id":              str(r.get("id", f"ESC{int(datetime.utcnow().timestamp())}")),
+            "issue":           r.get("issue", ""),
+            "customer":        r.get("customer", "Unknown"),
+            "sentiment":       "Negative" if len(str(r.get("issue", ""))) > 15 else "Positive",
+            "urgency":         "High" if "urgent" in str(r.get("issue", "")).lower() else "Low",
+            "status":          r.get("status", "Open"),
+            "date_reported":   str(r.get("date_reported", datetime.utcnow().isoformat())),
+            "spoc_email":      r.get("spoc_email", ""),
+            "spoc_boss_email": r.get("spoc_boss_email", ""),
+            "reminders_sent":  0,
+            "escalated":       0,
+            "priority":        analyze_priority(r.get("customer_email", "unknown@domain.com"))
         }
         upsert_escalation(case)
-        notify_spoc(case["spoc_email"], case["id"], "Initial")
+        notify(case["spoc_email"], case["id"], level="Initial")
     st.success("Escalations processed and SPOC notified.")
 
-# Fetch & filter cases for display
+# Main-screen filter
+show_escalated = st.checkbox("🔍 Show only escalated cases", value=False)
+
+# Fetch & apply filter
 df = fetch_cases()
-if show_escalated_only:
+if show_escalated:
     df = df[df["escalated"] == 1]
 
-# Kanban Board
+# Kanban board
 statuses = ["Open", "In Progress", "Resolved", "Closed"]
 cols     = st.columns(len(statuses))
 for i, status in enumerate(statuses):
     with cols[i]:
-        st.markdown(f"### {status}")
+        st.subheader(status)
         for _, r in df[df.status == status].iterrows():
             with st.expander(f"{r['id']} — {r['customer']}"):
                 st.write(f"**Issue:** {r['issue']}")
-                st.write(f"Urgency: {r['urgency']} | Sentiment: {r['sentiment']} | Priority: {r['priority']}")
-                new_status = st.selectbox("Update Status", statuses, index=statuses.index(status), key=r['id'])
+                st.write(f"Sentiment: {r['sentiment']} | Urgency: {r['urgency']} | Priority: {r['priority']}")
+                new_status = st.selectbox(
+                    "Update Status",
+                    statuses,
+                    index=statuses.index(status),
+                    key=r['id']
+                )
                 if new_status != r["status"]:
                     r["status"] = new_status
                     upsert_escalation(r.to_dict())
                     st.success("Status updated.")
                     st.experimental_rerun()
 
-# Download current board as Excel (main view)
+# Download current board as Excel
 buffer = io.BytesIO()
 df.to_excel(buffer, index=False, sheet_name="Escalations")
 buffer.seek(0)
