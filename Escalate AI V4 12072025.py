@@ -194,15 +194,16 @@ for i, status in enumerate(statuses):
         st.subheader(status)
         for _, r in df[df["status"] == status].iterrows():
             with st.expander(f"{r['id']} – {r['customer']}", expanded=False):
-                st.write(r["issue"])
-            st.markdown(
-                    st.markdown(
-                        f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
-                        f"**Owner:** {r.get('owner', 'Unassigned')}  \n"
-                        f"**Risk Score:** {float(r.get('risk_score', 0) or 0):.2f}  \n"
-                        f"**Status:** {r.get('status', '–')}  \n"
-                        f"**Action Taken:** {r.get('action_taken', '')}  \n"
-                        f"**SPOC Email:** {r.get('spoc_email', '–')}  \n"
-                        f"**Manager Email:** {r.get('spoc_manager_email', '–')}"
-                    )
-               
+    st.write(r.get("issue", "No issue provided"))
+    st.markdown(
+        f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
+        f"**Owner:** {r.get('owner', 'Unassigned')}  \n"
+        f"**Risk Score:** {float(r.get('risk_score', 0) or 0):.2f}  \n"
+        f"**Status:** {r.get('status', '–')}  \n"
+        f"**Action Taken:** {r.get('action_taken', '')}  \n"
+        f"**SPOC Email:** {r.get('spoc_email', '–')}  \n"
+        f"**Manager Email:** {r.get('spoc_manager_email', '–')}"
+    )
+    if st.button("Notify SPOC", key=f"notify-{r['id']}"):
+        notify_spoc(r["id"], r["spoc_email"])
+        st.success("SPOC notified.")
