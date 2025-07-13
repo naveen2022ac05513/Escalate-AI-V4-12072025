@@ -188,6 +188,8 @@ def send_email(to_: str, sub: str, body: str, esc_id: str, retries: int = 3):
             time.sleep(1)
     return False
 
+# ========== Outlook Polling ========== ... [code continues unchanged after this point]
+
 # ========== Outlook Polling ==========
 
 def poll_outlook():
