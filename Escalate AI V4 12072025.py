@@ -7,7 +7,7 @@
 # • SPOC notifications + 24‑hour manager escalation
 # • Streamlit Kanban dashboard, CSV/Excel upload, manual entry, export
 # --------------------------------------------------------------
-# Author: Naveen Gandham • v1.2.1 • July 2025
+# Author: Naveen Gandham • v1.2.2 • July 2025
 # ==============================================================
 
 """Setup
@@ -100,7 +100,9 @@ if HAS_O365 and O365_CLIENT_ID and O365_CLIENT_SECRET and O365_TENANT_ID:
     account = Account(creds, auth_flow_type="credentials", tenant_id=O365_TENANT_ID, token_backend=token_backend, protocol=protocol)
     if not account.is_authenticated:
         account.authenticate(scopes=["https://graph.microsoft.com/.default"])
-    inbox_folder = account.mailbox().inbox_folder() if account else None
+    mailbox = account.mailbox()
+    inbox_folder = mailbox.inbox_folder()
+    sent_folder = mailbox.sent_folder()
 
 # ========== DB Init ==========
 
@@ -188,34 +190,29 @@ def send_email(to_: str, sub: str, body: str, esc_id: str, retries: int = 3):
             time.sleep(1)
     return False
 
-# ========== Outlook Polling ========== ... [code continues unchanged after this point]
-
 # ========== Outlook Polling ==========
 
-def poll_outlook():
-    if not inbox_folder:
-        return
-    q = inbox_folder.new_query().on_attribute("is_read").equals(False)
-    for msg in inbox_folder.get_messages(limit=50, query=q):
+def poll_folder(folder):
+    new_cases = 0
+    if not account:
+        return 0
+    messages = folder.get_messages(limit=50)
+    for msg in messages:
         try:
-            body = msg.body or msg.body_preview or msg.subject or ""
-            if not body:
-                continue
-            sender = (msg.sender.address if msg.sender else "unknown").lower()
-            if SENDER_FILTER and sender not in SENDER_FILTER:
-                continue
-            sentiment, urgency, esc = analyze_issue(body)
+            sender = msg.sender.address if msg.sender else ""
+            body = msg.body or msg.body_preview or ""
+            subj = msg.subject or "(No Subject)"
+            sentiment, urgency, escalate = analyze_issue(body)
             if sentiment == "Negative":
-                eid = msg.message_id
                 case = {
-                    "id": eid,
+                    "id": msg.message_id,
                     "customer": sender,
-                    "issue": (msg.subject or "") + "\n" + body[:500],
-                    "criticality": "High",
-                    "impact": "High",
+                    "issue": f"{subj}\n{body[:500]}",
+                    "criticality": "High" if escalate else "Medium",
+                    "impact": "High" if escalate else "Medium",
                     "sentiment": sentiment,
                     "urgency": urgency,
-                    "escalated": int(esc),
+                    "escalated": int(escalate),
                     "date_reported": str(msg.received.date()),
                     "owner": "Unassigned",
                     "status": "Open",
@@ -225,64 +222,16 @@ def poll_outlook():
                     "spoc_boss_email": "",
                 }
                 upsert_case(case)
-            msg.mark_as_read()
+                msg.mark_as_read()
+                new_cases += 1
         except Exception as e:
-            print("[Outlook Poll]", e)
+            print("[Poll Error]", e)
+    return new_cases
 
-# ========== Reminder & Escalation job ==========
 
-def reminder_job():
-    df = fetch_cases()
-    now = datetime.utcnow()
-    for _, r in df.iterrows():
-        if r.status != "Open":
-            continue
-        hrs = (now - datetime.fromisoformat(r.date_reported)).total_seconds() / 3600
-        cnt = r.get("spoc_notify_count", 0) or 0
-        last = r.get("spoc_last_notified")
-        # SPOC reminders every 6h (max 2)
-        if cnt < 2 and hrs >= (cnt+1)*6:
-            if send_email(r.spoc_email, f"Escalation {r.id} Requires Action", r.issue[:400], r.id):
-                upd = r.to_dict(); upd["spoc_notify_count"] = cnt+1; upd["spoc_last_notified"] = now.isoformat(); upsert_case(upd)
-        # Manager escalation after 24h
-        elif cnt >=2 and hrs>=24 and r.spoc_boss_email and not r.escalated:
-            if send_email(r.spoc_boss_email, f"⚠️ Escalation {r.id} Pending >24h", r.issue[:400], r.id):
-                upd = r.to_dict(); upd["escalated"] = 1; upsert_case(upd)
-
-# ========== Scheduler ==========
-if "sched" not in st.session_state:
-    sched = BackgroundScheduler()
-    if account: sched.add_job(poll_outlook, "interval", minutes=POLL_INTERVAL_MIN)
-    sched.add_job(reminder_job, "interval", hours=1)
-    sched.start(); atexit.register(lambda: sched.shutdown(wait=False))
-    st.session_state.sched = True
-
-# ========== Utility ==========
-
-def df_to_excel_bytes(df: pd.DataFrame):
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine="xlsxwriter") as w:
-        df.to_excel(w, index=False, sheet_name="Escalations")
-    return buf.getvalue()
-
-# ========== Streamlit UI ==========
-st.set_page_config("EscalateAI", layout="wide")
-st.title("🚨 EscalateAI – Escalation Dashboard")
-
-# Sidebar file upload & manual form ---------------------------
-with st.sidebar:
-    st.header("📥 Upload Escalations")
-    f = st.file_uploader("Excel / CSV", type=["xlsx","csv"])
-    if f and st.button("Ingest File"):
-        df_u = pd.read_excel(f) if f.name.endswith("xlsx") else pd.read_csv(f)
-        for _, row in df_u.iterrows():
-            s, u, e = analyze_issue(str(row.get("issue","")))
-            case = {
-                "id": row.get("id", f"ESC{int(time.time()*1000)}"),
-                "customer": row.get("customer","Unknown"),
-                "issue": row.get("issue",""),
-                "criticality": row.get("criticality","Medium"),
-                "impact": row.get("impact","Medium"),
-                "sentiment": s,
-                "urgency": u,
-                "
+def outlook_poll():
+    inbox_new = poll_folder(inbox_folder) if inbox_folder else 0
+    sent_new = poll_folder(sent_folder) if sent_folder else 0
+    total = inbox_new + sent_new
+    if total:
+        st.toast(f"📩 {total} escalation(s) ingested from Outlook", icon="✉️")
