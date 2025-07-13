@@ -201,5 +201,7 @@ emojis = {"Open": "🟥", "In Progress": "🟧", "Resolved": "🟩"}
 summary = " | ".join([
     f"{emojis.get(s, '')} {s}: {counts.get(s, 0)}"
     for s in ["Open", "In Progress", "Resolved"]
+    df["status"] = df["status"].fillna("Open").astype(str).str.strip().str.title()
 ])
 st.markdown(f"### {summary}")
+st.dataframe(df[["id", "customer", "status", "issue"]])
