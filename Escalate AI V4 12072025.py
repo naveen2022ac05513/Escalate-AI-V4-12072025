@@ -54,7 +54,7 @@ def get_escalation_columns():
 init_db()
 
 # ── Helpers ──
-NEG_WORDS = re.compile(r"\b(delay|problem|issue|complaint|failure|critical|risk|unresponsive|defect)\b", re.I)
+NEG_WORDS = re.compile(r"\b(problematic|delay|issue|failure|dissatisfaction|frustration|unacceptable|mistake|complaint|unresolved|unresponsive|unstable|broken|defective|overdue|escalation|leakage|damage|burnt|critical|risk|dispute|faulty)\b", re.I)
 
 def analyze_issue(text):
     sentiment = "Negative" if NEG_WORDS.search(text) else "Positive"
