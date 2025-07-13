@@ -198,4 +198,8 @@ with st.sidebar:
 df = fetch_cases()
 counts = df["status"].value_counts().to_dict()
 emojis = {"Open": "🟥", "In Progress": "🟧", "Resolved": "🟩"}
-summary
+summary = " | ".join([
+    f"{emojis.get(s, '')} {s}: {counts.get(s, 0)}"
+    for s in ["Open", "In Progress", "Resolved"]
+])
+st.markdown(f"### {summary}")
