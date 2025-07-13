@@ -2,27 +2,27 @@ import os, re, sqlite3, smtplib, requests, atexit, io
 from datetime import datetime
 from email.mime.text import MIMEText
 from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# ── Load ENV ──
+# ── ENV Setup ──
 load_dotenv()
 APP_DIR = Path(__file__).parent
-DATA_DIR = APP_DIR / "data"; DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "escalateai.db"
-SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER = os.getenv("SMTP_USER")
-SMTP_PASS = os.getenv("SMTP_PASS")
+DB_PATH = APP_DIR / "data" / "escalateai.db"
+DB_PATH.parent.mkdir(exist_ok=True)
 
-# ── DB Setup ──
+SMTP_SERVER = os.getenv("SMTP_SERVER")
+SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER   = os.getenv("SMTP_USER")
+SMTP_PASS   = os.getenv("SMTP_PASS")
+
+# ── DB Init ──
 def init_db():
     conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("""
+    c = conn.cursor()
+    c.execute("""
     CREATE TABLE IF NOT EXISTS escalations (
         id TEXT PRIMARY KEY,
         customer TEXT, issue TEXT,
@@ -36,75 +36,61 @@ def init_db():
         date_reported TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
-    cur.execute("""
+    c.execute("""
     CREATE TABLE IF NOT EXISTS spoc_directory (
         spoc_email TEXT PRIMARY KEY,
         spoc_name TEXT,
         spoc_manager_email TEXT,
         teams_webhook TEXT
     )""")
-    conn.commit(); conn.close()
-
-def get_escalation_columns():
-    conn = sqlite3.connect(DB_PATH)
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(escalations)")]
+    conn.commit()
     conn.close()
-    return cols
 
+def get_columns():
+    conn = sqlite3.connect(DB_PATH)
+    return [col[1] for col in conn.execute("PRAGMA table_info(escalations)")]
+    
 init_db()
 
 # ── Helpers ──
-NEG_WORDS = re.compile(r"\b(problematic|delay|issue|failure|dissatisfaction|frustration|unacceptable|mistake|complaint|unresolved|unresponsive|unstable|broken|defective|overdue|escalation|leakage|damage|burnt|critical|risk|dispute|faulty)\b", re.I)
-
 def analyze_issue(text):
-    sentiment = "Negative" if NEG_WORDS.search(text) else "Positive"
-    urgency = "High" if any(w in text.lower() for w in ["urgent", "immediate", "critical"]) else "Low"
-    return sentiment, urgency, sentiment == "Negative" and urgency == "High"
+    sent = "Negative" if re.search(r"(dissatisfaction|failure|leakage|issue|critical)", text, re.I) else "Positive"
+    urg  = "High" if re.search(r"(urgent|immediate|impact)", text, re.I) else "Low"
+    return sent, urg, sent == "Negative" and urg == "High"
 
 def predict_risk(text):
-    return round(min(len(text.split())/50, 1.0), 2)
+    return round(min(len(text.split()) / 50, 1.0), 2)
 
-def upsert_case(case: dict):
-    # Get actual DB schema
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute("PRAGMA table_info(escalations)")
-    columns = [col[1] for col in cur.fetchall()]
-    conn.close()
-
-    # Keep only valid fields
-    filtered_case = {k: v for k, v in case.items() if k in columns}
-    keys = ",".join(filtered_case.keys())
-    qms  = ",".join(["?"] * len(filtered_case))
-    upd  = ",".join([f"{k}=excluded.{k}" for k in filtered_case if k != "id"])
-
+def upsert_case(case):
+    valid = get_columns()
+    clean = {k: case[k] for k in case if k in valid}
+    keys = ",".join(clean.keys())
+    qms  = ",".join("?" for _ in clean)
+    upd  = ",".join(f"{k}=excluded.{k}" for k in clean if k != "id")
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(f"""
-            INSERT INTO escalations ({keys}) VALUES ({qms})
-            ON CONFLICT(id) DO UPDATE SET {upd}
-        """, tuple(filtered_case.values()))
+        INSERT INTO escalations ({keys}) VALUES ({qms})
+        ON CONFLICT(id) DO UPDATE SET {upd}
+        """, tuple(clean.values()))
 
 def fetch_cases():
     conn = sqlite3.connect(DB_PATH)
-    schema = pd.read_sql("PRAGMA table_info(escalations)", conn)
-    if "created_at" in schema["name"].values:
-        df = pd.read_sql("SELECT * FROM escalations ORDER BY datetime(created_at) DESC", conn)
-    else:
-        df = pd.read_sql("SELECT * FROM escalations", conn)
+    cols = pd.read_sql("PRAGMA table_info(escalations)", conn)["name"].tolist()
+    order = " ORDER BY datetime(created_at) DESC" if "created_at" in cols else ""
+    df = pd.read_sql("SELECT * FROM escalations" + order, conn)
     conn.close()
     return df
 
-def notify_spoc(esc_id, spoc_email):
-    df = pd.read_sql("SELECT teams_webhook FROM spoc_directory WHERE spoc_email=?",
-                     sqlite3.connect(DB_PATH), params=(spoc_email,))
+def notify_spoc(esc_id, email):
+    df = pd.read_sql("SELECT teams_webhook FROM spoc_directory WHERE spoc_email=?", sqlite3.connect(DB_PATH), params=(email,))
     webhook = df.teams_webhook.iloc[0] if not df.empty else None
     body = f"🔔 Notification for escalation {esc_id}"
     try:
         msg = MIMEText(body)
-        msg["From"], msg["To"], msg["Subject"] = SMTP_USER, spoc_email, "Escalation Alert"
+        msg["From"], msg["To"], msg["Subject"] = SMTP_USER, email, "Escalation Alert"
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s:
             s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
-        requests.post(webhook, json={"text": body}) if webhook else None
+        if webhook: requests.post(webhook, json={"text": body})
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("""
             UPDATE escalations SET
@@ -117,11 +103,11 @@ def notify_spoc(esc_id, spoc_email):
 def monitor_reminders():
     df = fetch_cases()
     now = datetime.utcnow()
-    for _, r in df[df["status"] == "Open"].iterrows():
+    for _, r in df[df["status"].str.lower() == "open"].iterrows():
         try:
             reported = datetime.fromisoformat(r["date_reported"])
             hours = (now - reported).total_seconds() / 3600
-            if r["spoc_notify_count"] < 2 and hours > (r["spoc_notify_count"] + 1)*6:
+            if r["spoc_notify_count"] < 2 and hours > (r["spoc_notify_count"]+1)*6:
                 notify_spoc(r["id"], r["spoc_email"])
             elif r["spoc_notify_count"] >= 2 and hours > 24 and not r["escalated"]:
                 notify_spoc(r["id"], r["spoc_manager_email"])
@@ -131,47 +117,48 @@ def monitor_reminders():
 sched = BackgroundScheduler()
 sched.add_job(monitor_reminders, "interval", hours=1)
 sched.start()
-atexit.register(lambda: sched.shutdown(wait=False))
+atexit.register(lambda: sched.shutdown())
 
 # ── UI ──
 st.set_page_config("EscalateAI", layout="wide")
-st.title("🚨 EscalateAI – Escalation Tracking System")
+st.title("🚨 EscalateAI – Escalation Tracker")
 
 with st.sidebar:
     st.header("📥 Upload Escalations")
-    f = st.file_uploader("Excel/CSV", type=["xlsx", "csv"])
-    if f and st.button("Ingest"):
-        df = pd.read_excel(f) if f.name.endswith(".xlsx") else pd.read_csv(f)
+    file = st.file_uploader("Upload Excel/CSV", type=["xlsx", "csv"])
+    if file and st.button("Ingest File"):
+        df = pd.read_excel(file) if file.name.endswith(".xlsx") else pd.read_csv(file)
         for _, row in df.iterrows():
-            sent, urg, flag = analyze_issue(str(row.get("issue", "")))
+            issue = str(row.get("Brief Issue", "") or row.get("issue", ""))
+            s, u, esc = analyze_issue(issue)
             case = {
-                "id": row.get("id", f"ESC{int(datetime.utcnow().timestamp())}"),
-                "customer": row.get("customer", "Unknown"),
-                "issue": row.get("issue", ""),
-                "sentiment": sent,
-                "urgency": urg,
-                "risk_score": predict_risk(str(row.get("issue", ""))),
-                "status": row.get("status", "Open"),
-                "action_taken": row.get("action_taken", ""),
-                "owner": row.get("owner", "Unassigned"),
-                "spoc_email": row.get("spoc_email", ""),
-                "spoc_manager_email": row.get("spoc_manager_email", ""),
+                "id": f"ESC{int(datetime.utcnow().timestamp())}",
+                "customer": row.get("Customer", "Unknown"),
+                "issue": issue,
+                "sentiment": s,
+                "urgency": u,
+                "risk_score": predict_risk(issue),
+                "status": row.get("Status", "Open"),
+                "action_taken": row.get("Action taken", ""),
+                "owner": row.get("Owner", ""),
+                "spoc_email": "",
+                "spoc_manager_email": "",
                 "spoc_notify_count": 0,
                 "spoc_last_notified": "",
                 "escalated": 0,
-                "date_reported": str(row.get("date_reported", datetime.utcnow().isoformat()))
+                "date_reported": str(row.get("Issue reported date", datetime.utcnow().isoformat()))
             }
             upsert_case(case)
-        st.success("Escalations ingested.")
+        st.success("Uploaded successfully")
 
     st.header("✏️ Manual Entry")
     with st.form("manual"):
         cname = st.text_input("Customer")
         issue = st.text_area("Issue")
-        owner = st.text_input("Owner", value="Unassigned")
-        spoc  = st.text_input("SPOC Email")
-        mgr   = st.text_input("Manager Email")
-        if st.form_submit_button("Log Escalation"):
+        owner = st.text_input("Owner", "Unassigned")
+        spoc = st.text_input("SPOC Email")
+        mgr  = st.text_input("Manager Email")
+        if st.form_submit_button("Log"):
             s, u, esc = analyze_issue(issue)
             case = {
                 "id": f"ESC{int(datetime.utcnow().timestamp())}",
@@ -191,22 +178,24 @@ with st.sidebar:
                 "date_reported": datetime.utcnow().isoformat()
             }
             upsert_case(case)
-            notify_spoc(case["id"], case["spoc_email"])
-            st.success(f"Logged {case['id']}")
+            notify_spoc(case["id"], spoc)
+            st.success(f"Escalation {case['id']} logged")
 
     st.header("📋 SPOC Directory")
-    f_spoc = st.file_uploader("Upload SPOC Excel", type="xlsx", key="spocdir")
-    if f_spoc and st.button("Ingest SPOC"):
-        df_spoc = pd.read_excel(f_spoc)
+    spoc_file = st.file_uploader("Upload SPOC Excel", type="xlsx", key="spocdir")
+    if spoc_file and st.button("Ingest SPOC"):
+        df_s = pd.read_excel(spoc_file)
         with sqlite3.connect(DB_PATH) as conn:
-            for _, r in df_spoc.iterrows():
+            for _, r in df_s.iterrows():
                 conn.execute("""
                 INSERT OR REPLACE INTO spoc_directory
                 (spoc_email, spoc_name, spoc_manager_email, teams_webhook)
                 VALUES (?, ?, ?, ?)
-                """, (r["spoc_email"], r["spoc_name"], r["spoc_manager_email"], r["teams_webhook"]))
-        st.success("SPOC directory updated.")
+                """, (r.get("spoc_email"), r.get("spoc_name"), r.get("spoc_manager_email"), r.get("teams_webhook")))
+        st.success("SPOC directory updated")
 
 # ── Board ──
 df = fetch_cases()
-df
+counts = df["status"].value_counts().to_dict()
+emojis = {"Open": "🟥", "In Progress": "🟧", "Resolved": "🟩"}
+summary
