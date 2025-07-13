@@ -1,5 +1,3 @@
-# EscalateAI Streamlit app
-
 import os, re, sqlite3, smtplib, requests, atexit, io
 from datetime import datetime
 from email.mime.text import MIMEText
@@ -11,11 +9,12 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 # ── ENV ──
 load_dotenv()
-DB_PATH = Path("data/escalateai.db"); DB_PATH.parent.mkdir(exist_ok=True)
+DB_PATH = Path("data/escalateai.db")
+DB_PATH.parent.mkdir(exist_ok=True)
 SMTP_SERVER = os.getenv("SMTP_SERVER")
-SMTP_PORT   = int(os.getenv("SMTP_PORT", 587))
-SMTP_USER   = os.getenv("SMTP_USER")
-SMTP_PASS   = os.getenv("SMTP_PASS")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASS = os.getenv("SMTP_PASS")
 
 # ── DB INIT ──
 def init_db():
@@ -56,14 +55,14 @@ def analyze_issue(text):
     u = "High" if re.search(r"(urgent|immediate|impact)", text, re.I) else "Low"
     return s, u, s == "Negative" and u == "High"
 
-def predict_risk(text): return round(min(len(text.split())/50, 1.0), 2)
+def predict_risk(text): return round(min(len(text.split()) / 50, 1.0), 2)
 
 def upsert_case(case):
     cols = get_columns()
     clean = {k: case[k] for k in case if k in cols}
     keys = ",".join(clean.keys())
-    qms  = ",".join(["?"] * len(clean))
-    upd  = ",".join(f"{k}=excluded.{k}" for k in clean if k != "id")
+    qms = ",".join(["?"] * len(clean))
+    upd = ",".join(f"{k}=excluded.{k}" for k in clean if k != "id")
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(f"""
         INSERT INTO escalations ({keys}) VALUES ({qms})
@@ -81,7 +80,8 @@ def notify_spoc(esc_id, email):
     webhook = df.teams_webhook.iloc[0] if not df.empty else None
     try:
         body = f"🔔 Notification for escalation {esc_id}"
-        msg = MIMEText(body); msg["From"], msg["To"], msg["Subject"] = SMTP_USER, email, "Escalation Alert"
+        msg = MIMEText(body)
+        msg["From"], msg["To"], msg["Subject"] = SMTP_USER, email, "Escalation Alert"
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as s:
             s.starttls(); s.login(SMTP_USER, SMTP_PASS); s.send_message(msg)
         if webhook: requests.post(webhook, json={"text": body})
@@ -101,7 +101,7 @@ def monitor_reminders():
         try:
             reported = datetime.fromisoformat(r["date_reported"])
             hours = (now - reported).total_seconds() / 3600
-            if r["spoc_notify_count"] < 2 and hours > (r["spoc_notify_count"]+1)*6:
+            if r["spoc_notify_count"] < 2 and hours > (r["spoc_notify_count"] + 1) * 6:
                 notify_spoc(r["id"], r["spoc_email"])
             elif r["spoc_notify_count"] >= 2 and hours > 24 and not r["escalated"]:
                 notify_spoc(r["id"], r["spoc_manager_email"])
@@ -116,7 +116,7 @@ sched.start(); atexit.register(lambda: sched.shutdown())
 st.set_page_config("EscalateAI", layout="wide")
 st.title("🚨 EscalateAI – Escalation Tracker")
 
-# Upload block
+# Sidebar: Upload and Manual Entry
 with st.sidebar:
     st.header("📥 Upload Escalations")
     f = st.file_uploader("Excel/CSV", type=["xlsx", "csv"])
@@ -175,7 +175,7 @@ with st.sidebar:
             notify_spoc(case["id"], spoc)
             st.success(f"Escalation {case['id']} logged.")
 
-# ── Main Board ──
+# ── Kanban Board ──
 df = fetch_cases()
 df["status"] = df["status"].fillna("Open").astype(str).str.strip().str.title()
 
@@ -194,16 +194,7 @@ for i, status in enumerate(statuses):
         st.subheader(status)
         for _, r in df[df["status"] == status].iterrows():
             with st.expander(f"{r['id']} – {r['customer']}", expanded=False):
-    st.write(r.get("issue", "No issue provided"))
-    st.markdown(
-        f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
-        f"**Owner:** {r.get('owner', 'Unassigned')}  \n"
-        f"**Risk Score:** {float(r.get('risk_score', 0) or 0):.2f}  \n"
-        f"**Status:** {r.get('status', '–')}  \n"
-        f"**Action Taken:** {r.get('action_taken', '')}  \n"
-        f"**SPOC Email:** {r.get('spoc_email', '–')}  \n"
-        f"**Manager Email:** {r.get('spoc_manager_email', '–')}"
-    )
-    if st.button("Notify SPOC", key=f"notify-{r['id']}"):
-        notify_spoc(r["id"], r["spoc_email"])
-        st.success("SPOC notified.")
+                st.write(r.get("issue", "No issue provided"))
+                st.markdown(
+                    f"**Sentiment/Urgency:** {r.get('sentiment', '–')} / {r.get('urgency', '–')}  \n"
+                    f"**Owner:** {r.get('owner', '
